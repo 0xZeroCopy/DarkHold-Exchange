@@ -8,9 +8,41 @@ matchingEngine::matchingEngine(const std::string& walFilePath){
 }
 
 matchingEngine::~matchingEngine(){
-    if(!walStream.is_open()){
+    if(walStream.is_open()){
         walStream.close();
     }
+}
+
+void matchingEngine::printOrderBook(){
+    std::cout << "\n=== ASKS (SELLS) ===\n";
+    for(auto it = priceLevelsSell.rbegin(); it != priceLevelsSell.rend(); ++it){
+        std::cout<<"Price: "<<it->first<<" | Orders: "<<it->second.size()<<"\n";
+    }
+    std::cout << "=== BIDS (BUYS) ===\n";
+    for(auto it = priceLevelsBuy.rbegin(); it != priceLevelsBuy.rend(); ++it){
+        std::cout<<"Price: "<<it->first<<" | Orders: "<<it->second.size()<<"\n";
+    }
+    std::cout << "====================\n\n";
+}
+
+void matchingEngine::recoverFromWAL(const std::string& walFilePath){
+    isRecovering = true;
+    std::ifstream inpStream(walFilePath, std::ios::in | std::ios::binary);
+    if(!inpStream.is_open()){
+        std::cerr<<"Failed to open WAL file: "<<walFilePath<<"\n";
+        return;
+    }
+    Command cmd;
+    while(inpStream.read(reinterpret_cast<char*>(&cmd),sizeof(Command))){
+        if(cmd.type == CommandType::CANCEL_ORDER){
+            cancelOrder(cmd.cancelOrderID);
+        }
+        else{
+            processOrder(cmd.orderPayload,cmd.orderPayload.expiresAt - EXPIRY_DURATION);    //Passing the original timestamp for deterministic expiry
+        }
+        nextSequenceNumber = cmd.sequenceNumber + 1;
+    }
+    isRecovering = false;
 }
 
 void matchingEngine::checkExpiration(uint64_t currentTime){
@@ -22,9 +54,21 @@ void matchingEngine::checkExpiration(uint64_t currentTime){
 }
 
 std::vector<Trade> matchingEngine::processOrder(Order newOrder, uint64_t now){
+
     std::vector <Trade> ret;
     uint64_t expireTime = now + EXPIRY_DURATION;
     newOrder.expiresAt = expireTime;
+
+    if(!isRecovering){
+        //Creating the command to flush into the SSD for storage
+        Command cmd;
+        cmd.sequenceNumber = nextSequenceNumber++;
+        cmd.type = CommandType::PLACE_ORDER;
+        cmd.orderPayload = newOrder;
+        walStream.write(reinterpret_cast<const char*> (&cmd), sizeof(Command));
+        walStream.flush();
+    }
+
     checkExpiration(now);
     if(newOrder.isBuy){
         while(!priceLevelsSell.empty() && priceLevelsSell.begin()->first <= newOrder.price && newOrder.quantityRemaining > 0){
@@ -78,6 +122,16 @@ std::vector<Trade> matchingEngine::processOrder(Order newOrder, uint64_t now){
 }
 
 bool matchingEngine::cancelOrder(uint64_t cancelOrderID){
+
+    if(!isRecovering){
+        Command cmd;
+        cmd.sequenceNumber = nextSequenceNumber++;
+        cmd.type = CommandType::CANCEL_ORDER;
+        cmd.cancelOrderID = cancelOrderID;
+        walStream.write(reinterpret_cast<const char*> (&cmd), sizeof(Command));
+        walStream.flush();
+    }
+
     auto found = ActiveOrders.find(cancelOrderID);
     if(found!=ActiveOrders.end()){
         OrderIt cancelOrder = found->second;

@@ -19,7 +19,7 @@ inline uint64_t nowMs() {
     return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
-#pragma pack(push,1)    //Packs the enum class into 1 byte to avoid padding and therefore featuring faster disk writing
+#pragma pack(push,1)    //Ensures that data is packed as much as possible to reduce the number of bytes to be written to the disk
 struct Order{
     uint64_t orderID;
     uint32_t quantityRemaining;
@@ -38,8 +38,10 @@ enum class CommandType:uint8_t{
 struct Command {
     uint64_t sequenceNumber;
     CommandType type;
-    uint64_t cancelOrderID;   //Only used if type is CANCEL_ORDER
-    Order orderPayload;  //Only used if type is PLACE_ORDER
+    union{
+        uint64_t cancelOrderID;   //Only used if type is CANCEL_ORDER
+        Order orderPayload;  //Only used if type is PLACE_ORDER
+    };
 };
 #pragma pack(pop)
 
@@ -74,11 +76,14 @@ class matchingEngine{
     std::map<uint32_t,Level, std::greater<>> priceLevelsBuy;    //Buy Orders (limit) waiting to be matched
     std::map<uint32_t, Level>priceLevelsSell;    //Sell Orders (limit) waiting to be matched
     std::ofstream walStream;
-
+    uint64_t nextSequenceNumber;    //To guarantee a fallback option from WAL if something fails
+    uint8_t isRecovering=false;
 public:
     matchingEngine(const std::string& walFilePath);
     std::vector<Trade> processOrder(Order newOrder, uint64_t now);
     bool cancelOrder(uint64_t cancelOrderID);
     void checkExpiration(u_int64_t currentTime);
+    void recoverFromWAL(const std::string& walFilePath);
+    void printOrderBook();
     ~matchingEngine();
 };
