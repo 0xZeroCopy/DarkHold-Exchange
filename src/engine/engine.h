@@ -11,6 +11,7 @@
 #include <queue>
 #include <cstdint>
 #include <chrono>
+#include <fstream>
 
 //To calculate current time in ms
 inline uint64_t nowMs() {
@@ -18,32 +19,47 @@ inline uint64_t nowMs() {
     return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
+#pragma pack(push,1)    //Packs the enum class into 1 byte to avoid padding and therefore featuring faster disk writing
 struct Order{
-    int orderID;
-    int quantityRemaining;
-    int price;
-    bool isBuy;
-    int accountID;
+    uint64_t orderID;
+    uint32_t quantityRemaining;
+    uint32_t price;
+    uint8_t isBuy;
+    uint64_t accountID;
     uint64_t expiresAt;
-    bool isMarket;
+    uint8_t isMarket;
 };
+
+enum class CommandType:uint8_t{
+    PLACE_ORDER = 1,
+    CANCEL_ORDER = 2
+};
+
+struct Command {
+    uint64_t sequenceNumber;
+    CommandType type;
+    uint64_t cancelOrderID;   //Only used if type is CANCEL_ORDER
+    Order orderPayload;  //Only used if type is PLACE_ORDER
+};
+#pragma pack(pop)
+
 
 struct Trade{
     long long tradeID;
-    int buyOrderID;
-    int sellOrderID;
-    int quantityFulfilled;
-    int price;
-    int buyerID;
-    int sellerID;
+    uint64_t buyOrderID;
+    uint64_t sellOrderID;
+    uint32_t quantityFulfilled;
+    uint32_t price;
+    uint64_t buyerID;
+    uint64_t sellerID;
 };
 
 using Level = std::list<Order>; //Defines level as lists which go against the maps
 using OrderIt = Level::iterator;
 
-struct ExpiryRecord {
+struct ExpiryRecord{
     u_int64_t expiresAt;
-    int orderID;
+    uint64_t orderID;
     
     // This tells C++ how to compare two records so the earliest time goes to the top
     bool operator>(const ExpiryRecord& other) const {
@@ -54,12 +70,15 @@ struct ExpiryRecord {
 class matchingEngine{
     std::priority_queue<ExpiryRecord, std::vector<ExpiryRecord>, std::greater<>> expireQueue;
     long long tradeID=0;
-    std::unordered_map<int,OrderIt> ActiveOrders;
-    std::map<int, Level, std::greater<>> priceLevelsBuy;    //Buy Orders (limit) waiting to be matched
-    std::map<int, Level>priceLevelsSell;    //Sell Orders (limit) waiting to be matched
+    std::unordered_map<uint64_t,OrderIt> ActiveOrders;
+    std::map<uint32_t,Level, std::greater<>> priceLevelsBuy;    //Buy Orders (limit) waiting to be matched
+    std::map<uint32_t, Level>priceLevelsSell;    //Sell Orders (limit) waiting to be matched
+    std::ofstream walStream;
 
 public:
+    matchingEngine(const std::string& walFilePath);
     std::vector<Trade> processOrder(Order newOrder, uint64_t now);
-    bool cancelOrder(int cancelOrderID);
+    bool cancelOrder(uint64_t cancelOrderID);
     void checkExpiration(u_int64_t currentTime);
+    ~matchingEngine();
 };

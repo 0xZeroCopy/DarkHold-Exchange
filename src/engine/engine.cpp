@@ -1,5 +1,18 @@
 #include "engine.h"
 
+matchingEngine::matchingEngine(const std::string& walFilePath){
+    walStream.open(walFilePath, std::ios::out | std::ios::app | std::ios::binary);  //Opens the file at walFilePath in binary in append mode in binary as an output stream
+    if(!walStream.is_open()){
+        std::cerr<<"Failed to open WAL file: "<<walFilePath<<"\n";
+    }
+}
+
+matchingEngine::~matchingEngine(){
+    if(!walStream.is_open()){
+        walStream.close();
+    }
+}
+
 void matchingEngine::checkExpiration(uint64_t currentTime){
     while(!expireQueue.empty() && currentTime > expireQueue.top().expiresAt){
         int expireOrderID = expireQueue.top().orderID;
@@ -17,7 +30,7 @@ std::vector<Trade> matchingEngine::processOrder(Order newOrder, uint64_t now){
         while(!priceLevelsSell.empty() && priceLevelsSell.begin()->first <= newOrder.price && newOrder.quantityRemaining > 0){
             tradeID++;
             Order& bestOrder = priceLevelsSell.begin()->second.front();
-            int quantity = std::min(bestOrder.quantityRemaining, newOrder.quantityRemaining);
+            uint32_t quantity = std::min(bestOrder.quantityRemaining, newOrder.quantityRemaining);
             newOrder.quantityRemaining -= quantity;
             bestOrder.quantityRemaining -= quantity;
             ret.push_back({tradeID,newOrder.orderID,bestOrder.orderID,quantity,bestOrder.price,newOrder.accountID,bestOrder.accountID});
@@ -42,7 +55,7 @@ std::vector<Trade> matchingEngine::processOrder(Order newOrder, uint64_t now){
         while(!priceLevelsBuy.empty() && priceLevelsBuy.begin()->first >= newOrder.price && newOrder.quantityRemaining > 0){
             tradeID++;
             Order& bestOrder = priceLevelsBuy.begin()->second.front();
-            int quantity = std::min(bestOrder.quantityRemaining, newOrder.quantityRemaining);
+            uint32_t quantity = std::min(bestOrder.quantityRemaining, newOrder.quantityRemaining);
             newOrder.quantityRemaining -= quantity;
             bestOrder.quantityRemaining -= quantity;
             ret.push_back({tradeID,bestOrder.orderID,newOrder.orderID,quantity,bestOrder.price,bestOrder.accountID,newOrder.accountID});
@@ -64,7 +77,7 @@ std::vector<Trade> matchingEngine::processOrder(Order newOrder, uint64_t now){
     }
 }
 
-bool matchingEngine::cancelOrder(int cancelOrderID){
+bool matchingEngine::cancelOrder(uint64_t cancelOrderID){
     auto found = ActiveOrders.find(cancelOrderID);
     if(found!=ActiveOrders.end()){
         OrderIt cancelOrder = found->second;
