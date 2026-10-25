@@ -32,7 +32,9 @@ struct Order{
 
 enum class CommandType:uint8_t{
     PLACE_ORDER = 1,
-    CANCEL_ORDER = 2
+   CANCEL_ORDER = 2,
+    TICK = 3,
+   SNAPSHOT = 4
 };
 
 struct Command {
@@ -42,9 +44,11 @@ struct Command {
         uint64_t cancelOrderID;   //Only used if type is CANCEL_ORDER
         Order orderPayload;  //Only used if type is PLACE_ORDER
     };
+    uint64_t now;
 };
 #pragma pack(pop)
 
+static_assert(sizeof(Command) == 51, "Command layout changed");
 
 struct Trade{
     long long tradeID;
@@ -60,7 +64,7 @@ using Level = std::list<Order>; //Defines level as lists which go against the ma
 using OrderIt = Level::iterator;
 
 struct ExpiryRecord{
-    u_int64_t expiresAt;
+    uint64_t expiresAt;
     uint64_t orderID;
     
     // This tells C++ how to compare two records so the earliest time goes to the top
@@ -76,13 +80,13 @@ class matchingEngine{
     std::map<uint32_t,Level, std::greater<>> priceLevelsBuy;    //Buy Orders (limit) waiting to be matched
     std::map<uint32_t, Level>priceLevelsSell;    //Sell Orders (limit) waiting to be matched
     std::ofstream walStream;
-    uint64_t nextSequenceNumber;    //To guarantee a fallback option from WAL if something fails
+    uint64_t nextSequenceNumber = 0;    //To guarantee a fallback option from WAL if something fails
     uint8_t isRecovering=false;
 public:
     matchingEngine(const std::string& walFilePath);
     std::vector<Trade> processOrder(Order newOrder, uint64_t now);
     bool cancelOrder(uint64_t cancelOrderID);
-    void checkExpiration(u_int64_t currentTime);
+    void checkExpiration(uint64_t currentTime);
     void recoverFromWAL(const std::string& walFilePath);
     void printOrderBook();
     ~matchingEngine();

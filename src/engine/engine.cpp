@@ -1,4 +1,5 @@
 #include "engine.h"
+#include <cstring>
 
 matchingEngine::matchingEngine(const std::string& walFilePath){
     walStream.open(walFilePath, std::ios::out | std::ios::app | std::ios::binary);  //Opens the file at walFilePath in binary in append mode in binary as an output stream
@@ -30,6 +31,7 @@ void matchingEngine::recoverFromWAL(const std::string& walFilePath){
     std::ifstream inpStream(walFilePath, std::ios::in | std::ios::binary);
     if(!inpStream.is_open()){
         std::cerr<<"Failed to open WAL file: "<<walFilePath<<"\n";
+        isRecovering = false;
         return;
     }
     Command cmd;
@@ -38,7 +40,7 @@ void matchingEngine::recoverFromWAL(const std::string& walFilePath){
             cancelOrder(cmd.cancelOrderID);
         }
         else{
-            processOrder(cmd.orderPayload,cmd.orderPayload.expiresAt - EXPIRY_DURATION);    //Passing the original timestamp for deterministic expiry
+            processOrder(cmd.orderPayload, cmd.now);    //Passing the original timestamp for deterministic expiry
         }
         nextSequenceNumber = cmd.sequenceNumber + 1;
     }
@@ -47,7 +49,7 @@ void matchingEngine::recoverFromWAL(const std::string& walFilePath){
 
 void matchingEngine::checkExpiration(uint64_t currentTime){
     while(!expireQueue.empty() && currentTime > expireQueue.top().expiresAt){
-        int expireOrderID = expireQueue.top().orderID;
+        uint64_t expireOrderID = expireQueue.top().orderID;
         cancelOrder(expireOrderID);
         expireQueue.pop();
     }
@@ -62,9 +64,11 @@ std::vector<Trade> matchingEngine::processOrder(Order newOrder, uint64_t now){
     if(!isRecovering){
         //Creating the command to flush into the SSD for storage
         Command cmd;
+        std::memset(&cmd, 0, sizeof(cmd));
         cmd.sequenceNumber = nextSequenceNumber++;
         cmd.type = CommandType::PLACE_ORDER;
         cmd.orderPayload = newOrder;
+        cmd.now = now;
         walStream.write(reinterpret_cast<const char*> (&cmd), sizeof(Command));
         walStream.flush();
     }
@@ -125,6 +129,7 @@ bool matchingEngine::cancelOrder(uint64_t cancelOrderID){
 
     if(!isRecovering){
         Command cmd;
+        std::memset(&cmd, 0, sizeof(cmd));
         cmd.sequenceNumber = nextSequenceNumber++;
         cmd.type = CommandType::CANCEL_ORDER;
         cmd.cancelOrderID = cancelOrderID;
@@ -136,7 +141,7 @@ bool matchingEngine::cancelOrder(uint64_t cancelOrderID){
     if(found!=ActiveOrders.end()){
         OrderIt cancelOrder = found->second;
         bool isBuy = cancelOrder->isBuy;
-        int price = cancelOrder->price;
+        uint32_t price = cancelOrder->price;
         if(isBuy){
             auto levelIt = priceLevelsBuy.find(price);  //Finding the price level and storing it once to avoid searching twice while deletion and checking whether empty
             levelIt->second.erase(cancelOrder);
