@@ -6,6 +6,8 @@ import mongoose from 'mongoose';
 import { WebSocketServer, WebSocket } from 'ws';
 import { EngineClient } from './services/engineClient.js';
 import { createExchange, ExchangeError } from './services/exchange.js';
+import accessRoutes from './routes/accessRoutes.js';
+import { verifyToken } from './services/authService.js';
 
 const PORT = Number(process.env.PORT || 5000);
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/darkhold';
@@ -21,11 +23,13 @@ const sessions = new Map();
 const send = (ws, data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)); };
 const hub = {
   toAccount(accountId, data) { sessions.get(accountId)?.forEach((ws) => send(ws, data)); },
-  broadcast(data) { wss.clients.forEach((ws) => send(ws, data)); }
+  broadcast(data) { wss.clients.forEach((ws) => { if (ws.accountId != null) send(ws, data); }); } // signed-in sockets only
 };
 
 const app = express();
 app.use(cors());
+app.use(express.json({ limit: '10kb' }));
+app.use('/api/auth', accessRoutes);
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 16 * 1024 });
 
@@ -62,8 +66,10 @@ wss.on('connection', (ws) => {
       const payload = JSON.parse(raw);
 
       if (payload.action === 'REGISTER_USER') {
-        const accountId = Number(payload.userId);
-        if (!Number.isSafeInteger(accountId) || accountId < 1) throw new ExchangeError('Invalid user id.');
+        // The account comes from the signed token, never from the client-supplied userId.
+        const session = verifyToken(payload.token);
+        if (!session) return send(ws, { type: 'AUTH_ERROR', message: 'Session expired. Please sign in again.' });
+        const accountId = session.accountId;
         unregister(ws);
         ws.accountId = accountId;
         if (!sessions.has(accountId)) sessions.set(accountId, new Set());
@@ -72,7 +78,7 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      if (ws.accountId == null) throw new ExchangeError('Not registered. Select a trader first.');
+      if (ws.accountId == null) throw new ExchangeError('Not signed in.');
 
       if (payload.action === 'SUBMIT_ORDER') {
         await exchange.placeOrder(ws.accountId, {

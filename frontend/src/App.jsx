@@ -19,8 +19,8 @@ const STATUS_STYLES = {
 const money = (n) => `$${Number(n ?? 0).toLocaleString()}`;
 const timeOf = (d) => (d ? new Date(d).toLocaleTimeString() : '--');
 
-export default function App() {
-  const [userId, setUserId] = useState('1001');
+export default function App({ auth }) {
+  const [userId] = useState(String(auth.user.accountId));
   const [balances, setBalances] = useState(null);
   const [orders, setOrders] = useState([]);
   const [trades, setTrades] = useState([]);
@@ -71,6 +71,9 @@ export default function App() {
       case 'ENGINE_STATUS':
         setEngineOnline(data.online);
         break;
+      case 'AUTH_ERROR':
+        auth.logout();
+        break;
       case 'ERROR':
         showNotice('error', data.message);
         break;
@@ -80,17 +83,17 @@ export default function App() {
       default:
         break;
     }
-  }, [showNotice]);
+  }, [showNotice, auth]);
 
-  const register = useCallback((send) => send({ action: 'REGISTER_USER', userId: userIdRef.current }), []);
+  const register = useCallback((send) => send({ action: 'REGISTER_USER', userId: userIdRef.current, token: auth.token }), [auth.token]);
   const { depthData, isConnected, lastPrice, send } = useWebSocket(WS_URL, { onOpen: register, onMessage: handleMessage });
 
-  // Switching trader re-registers on the same socket
+  // Register the signed-in trader on the socket (the gateway takes the account from the token)
   useEffect(() => {
     setBalances(null);
     setOrders([]);
-    send({ action: 'REGISTER_USER', userId });
-  }, [userId, send]);
+    send({ action: 'REGISTER_USER', userId, token: auth.token });
+  }, [userId, send, auth.token]);
 
   const handleSubmitOrder = (e) => {
     e.preventDefault();
@@ -128,15 +131,16 @@ export default function App() {
               <span className="text-gray-500">Engine {isConnected && engineOnline ? 'online' : 'offline'}</span>
             </div>
             <div className="flex items-center space-x-3">
-              <label className="text-sm font-medium text-gray-600">Switch User:</label>
-              <select
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                className="bg-white border border-gray-300 text-gray-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              <span className="text-sm font-medium text-gray-600">
+                Signed in as <span className="font-bold text-gray-800">{auth.user.username}</span>{' '}
+                <span className="text-gray-400">#{auth.user.accountId}</span>
+              </span>
+              <button
+                onClick={auth.logout}
+                className="bg-white border border-gray-300 text-gray-700 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="1001">Trader #1001</option>
-                <option value="1002">Trader #1002</option>
-              </select>
+                Log out
+              </button>
             </div>
           </div>
         </header>
