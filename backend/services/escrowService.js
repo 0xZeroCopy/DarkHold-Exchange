@@ -2,42 +2,35 @@ import User from '../models/User.js';
 
 export class EscrowService {
   static async lockEscrow(userId, isBuy, price, quantity) {
-    const user = await User.findById(userId);
-    if (!user) throw new Error("User not found. Run node seed.js!");
+    const total = price * quantity;
+    const query = isBuy 
+      ? { _id: userId, 'balances.availableCash': { $gte: total } }
+      : { _id: userId, 'balances.availableTickets': { $gte: quantity } };
+      
+    const update = isBuy
+      ? { $inc: { 'balances.availableCash': -total, 'balances.heldCash': total } }
+      : { $inc: { 'balances.availableTickets': -quantity, 'balances.heldTickets': quantity } };
 
-    const totalCost = price * quantity;
-
-    if (isBuy) {
-      if (user.balances.availableCash < totalCost) throw new Error(`Insufficient cash. Need $${totalCost}`);
-      user.balances.availableCash -= totalCost;
-      user.balances.heldCash += totalCost;
-    } else {
-      if (user.balances.availableTickets < quantity) throw new Error(`Insufficient tickets. Need ${quantity}`);
-      user.balances.availableTickets -= quantity;
-      user.balances.heldTickets += quantity;
-    }
-    
-    await user.save();
+    const user = await User.findOneAndUpdate(query, update, { new: true });
+    if (!user) throw new Error("Insufficient balance or user not found.");
     return user.balances;
   }
 
-  static async settleTrade(buyerId, sellerId, matchPrice, matchQty) {
-    const buyer = await User.findById(buyerId);
-    const seller = await User.findById(sellerId);
-    
-    if (!buyer || !seller) return null;
+  static async settleTrade(buyerId, sellerId, matchPrice, matchQty, originalBuyPrice) {
+    const cost = matchPrice * matchQty;
+    const refund = (originalBuyPrice - matchPrice) * matchQty; 
 
-    const totalTradeValue = matchPrice * matchQty;
-
-    buyer.balances.heldCash -= totalTradeValue;
-    buyer.balances.availableTickets += matchQty;
-
-    seller.balances.heldTickets -= matchQty;
-    seller.balances.availableCash += totalTradeValue;
-
-    await buyer.save();
-    await seller.save();
-
-    return { buyerBalances: buyer.balances, sellerBalances: seller.balances };
+    await Promise.all([
+      User.updateOne({ _id: buyerId }, {
+        $inc: { 
+          'balances.heldCash': -(cost + refund), 
+          'balances.availableCash': refund, 
+          'balances.availableTickets': matchQty 
+        }
+      }),
+      User.updateOne({ _id: sellerId }, {
+        $inc: { 'balances.heldTickets': -matchQty, 'balances.availableCash': cost }
+      })
+    ]);
   }
 }

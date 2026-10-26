@@ -1,50 +1,32 @@
+import 'dotenv/config';
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-import User from './models/User.js';
-import Event from './models/Event.js';
+import User, { DEFAULT_BALANCES } from './models/User.js';
+import Order from './models/Order.js';
+import Trade from './models/Trade.js';
 
-dotenv.config();
+// Usage: npm run seed            -> make sure demo traders 1001 and 1002 exist
+//        npm run seed -- --reset -> wipe orders/trades and reset balances (restart the engine afterwards!)
+const reset = process.argv.includes('--reset');
 
-const USER_ID = '60d5ecb8b5c9c22b1c8e1001';
-const EVENT_ID = '60d5ecb8b5c9c22b1c8e1002';
+try {
+  await mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/darkhold', { serverSelectionTimeoutMS: 5000 });
 
-const seed = async () => {
-  try {
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/darkhold_exchange');
-
-    // Clean existing records
-    await User.deleteMany({});
-    await Event.deleteMany({});
-
-    // Seed User
-    const user = await User.create({
-      _id: new mongoose.Types.ObjectId(USER_ID),
-      username: 'suyas',
-      email: 'suyas@example.com',
-      passwordHash: 'hashedpassword',
-      balances: { availableCash: 2500, heldCash: 0, availableTickets: 10, heldTickets: 0 }
-    });
-
-    // Seed Event
-    const event = await Event.create({
-      _id: new mongoose.Types.ObjectId(EVENT_ID),
-      title: 'Coldplay: Music of the Spheres World Tour',
-      faceValue: 100,
-      maxCollarPrice: 200,
-      totalTickets: 50000,
-      eventDate: new Date('2026-11-15')
-    });
-
-    console.log('\n================ DATABASE SEEDED ================');
-    console.log(`USER_ID  : ${user._id}`);
-    console.log(`EVENT_ID : ${event._id}`);
-    console.log('=================================================\n');
-
-    process.exit(0);
-  } catch (error) {
-    console.error('Seed Error:', error);
-    process.exit(1);
+  if (reset) {
+    await Promise.all([Order.deleteMany({}), Trade.deleteMany({}), User.deleteMany({})]);
+    console.log('Cleared orders, trades and users.');
   }
-};
 
-seed();
+  for (const accountId of [1001, 1002]) {
+    await User.updateOne(
+      { accountId },
+      { $setOnInsert: { accountId, name: `Trader #${accountId}`, balances: { ...DEFAULT_BALANCES } } },
+      { upsert: true }
+    );
+  }
+  console.log('Seeded traders #1001 and #1002.');
+  if (reset) console.log('NOTE: restart the C++ engine so its in-memory book is empty too.');
+  process.exit(0);
+} catch (err) {
+  console.error('Seed error:', err.message);
+  process.exit(1);
+}

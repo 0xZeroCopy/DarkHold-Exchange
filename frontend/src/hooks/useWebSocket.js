@@ -1,58 +1,74 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-export function useWebSocket(url, onMessage) {
+/**
+ * Reconnecting WebSocket hook.
+ * - `onOpen(send)` runs on every (re)connect, e.g. to register the user again.
+ * - `onMessage(msg)` receives every message except plain depth snapshots.
+ * - depthData / lastPrice are kept up to date from DEPTH_SNAPSHOT (and the depth in INIT_USER_DATA).
+ */
+export function useWebSocket(url, { onOpen, onMessage } = {}) {
   const [depthData, setDepthData] = useState({ bids: [], asks: [] });
   const [isConnected, setIsConnected] = useState(false);
-  const [lastPrice, setLastPrice] = useState(188.50);
-  
+  const [lastPrice, setLastPrice] = useState(null);
+
   const wsRef = useRef(null);
-  const pendingFrameRef = useRef(null);
+  const onOpenRef = useRef(onOpen);
   const onMessageRef = useRef(onMessage);
+  useEffect(() => { onOpenRef.current = onOpen; onMessageRef.current = onMessage; }, [onOpen, onMessage]);
 
-  // Keep the latest callback reference without triggering re-renders
+  const send = useCallback((payload) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(payload));
+    return true;
+  }, []);
+
   useEffect(() => {
-    onMessageRef.current = onMessage;
-  }, [onMessage]);
+    let closed = false;
+    let retries = 0;
+    let timer;
 
-  useEffect(() => {
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
+    const applyDepth = (d) => {
+      if (!d) return;
+      setDepthData({ bids: d.bids || [], asks: d.asks || [] });
+      setLastPrice(d.lastPrice ?? null);
+    };
 
-    ws.onopen = () => setIsConnected(true);
-    ws.onclose = () => setIsConnected(false);
+    const connect = () => {
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
 
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-
-        if (message.type === 'DEPTH_SNAPSHOT') {
-          if (pendingFrameRef.current) cancelAnimationFrame(pendingFrameRef.current);
-          pendingFrameRef.current = requestAnimationFrame(() => {
-            setDepthData(message.data);
-            if (message.data?.lastPrice) setLastPrice(message.data.lastPrice);
-          });
-        } else {
-          // Instantly trigger the event callback for executions (No React state delays)
-          if (onMessageRef.current) {
-            onMessageRef.current(message);
-          }
+      ws.onopen = () => {
+        retries = 0;
+        setIsConnected(true);
+        onOpenRef.current?.(send);
+      };
+      ws.onclose = () => {
+        setIsConnected(false);
+        if (!closed) timer = setTimeout(connect, Math.min(5000, 500 * 2 ** retries++));
+      };
+      ws.onerror = () => ws.close();
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'DEPTH_SNAPSHOT') return applyDepth(message.data);
+          if (message.type === 'INIT_USER_DATA') applyDepth(message.depth);
+          onMessageRef.current?.(message);
+        } catch (e) {
+          console.error('WS parse error:', e);
         }
-      } catch (e) {
-        console.error('WS Parse Error:', e);
-      }
+      };
     };
 
+    connect();
     return () => {
-      if (pendingFrameRef.current) cancelAnimationFrame(pendingFrameRef.current);
-      ws.close();
+      closed = true;
+      clearTimeout(timer);
+      wsRef.current?.close();
     };
-  }, [url]);
+  }, [url, send]);
 
-  const sendOrder = (orderPayload) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ action: 'SUBMIT_ORDER', ...orderPayload }));
-    }
-  };
+  const sendOrder = (orderPayload) => send({ action: 'SUBMIT_ORDER', ...orderPayload });
 
-  return { depthData, isConnected, lastPrice, sendOrder };
+  return { depthData, isConnected, lastPrice, send, sendOrder };
 }

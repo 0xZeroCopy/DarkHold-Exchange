@@ -1,57 +1,90 @@
+import net from 'net';
 import { spawn } from 'child_process';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { EscrowService } from './escrowService.js'; // Ensure correct import path
+
+// Safely resolve directory path in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 class EngineBridge {
   constructor() {
-    // Path to compiled C++ binary
-    const enginePath = path.resolve('../cpp-engine/build/matching_engine.exe');
+    this.client = new net.Socket();
+    this.connected = false;
+
+    // Resolve path relative to this file's exact location (backend/services/)
+    const enginePath = path.resolve(__dirname, '../../cpp-engine/build/matching_engine.exe');
     
-    // Spawn C++ binary process
-    this.engine = spawn(enginePath, [], {
-      stdio: ['pipe', 'pipe', 'inherit']
+    console.log(`🚀 Starting C++ Matching Engine process at: ${enginePath}`);
+    this.engineProcess = spawn(enginePath, [], {
+      stdio: ['ignore', 'inherit', 'inherit'] 
     });
 
-    this.engine.stdout.on('data', (data) => {
-      const output = data.toString().trim();
-      console.log(`[C++ Engine Output]: ${output}`);
-      // Parse trade execution events returned from C++
-      this.handleEngineEvent(output);
+    // Catch hidden spawn errors
+    this.engineProcess.on('error', (err) => {
+      console.error(`❌ Failed to start C++ engine. Path issue: ${err.message}`);
     });
 
-    this.engine.on('close', (code) => {
-      console.error(`C++ Engine process exited with code ${code}`);
+    this.engineProcess.on('close', (code) => {
+      console.error(`🔴 C++ Engine process exited with code ${code}`);
+      this.connected = false;
+    });
+
+    setTimeout(() => this.connectToEngine(), 1000);
+  }
+
+  connectToEngine() {
+    this.client.connect(9000, '127.0.0.1', () => {
+      console.log('🟢 Connected to C++ Engine TCP Server');
+      this.connected = true;
+    });
+
+    this.client.on('data', (data) => {
+      this.handleEngineEvent(data.toString().trim());
+    });
+
+    this.client.on('error', (err) => {
+      console.error(`[TCP Bridge Error]: ${err.message}`);
+    });
+
+    this.client.on('close', () => {
+      console.log('⚠️ TCP connection closed. Reconnecting in 3s...');
+      this.connected = false;
+      setTimeout(() => this.connectToEngine(), 3000);
     });
   }
 
-  // Send JSON order payload directly to C++ stdin
   submitOrderToEngine(order) {
-    const payload = JSON.stringify({
-      type: 'ADD_ORDER',
-      orderId: order.orderID,
-      isBuy: order.isBuy,
-      price: order.price,
-      quantity: order.quantityRemaining
-    }) + '\n';
+    if (!this.connected) return;
+    
+    const account = order.accountID || 'system';
+    const isBuyFlag = order.isBuy ? 1 : 0;
+    const payload = `P ${order.orderID} ${account} ${isBuyFlag} ${order.price} ${order.quantityRemaining}\n`;
+    
+    this.client.write(payload);
+  }
 
-    if (this.engine.stdin.writable) {
-      this.engine.stdin.write(payload);
-    }
+  cancelOrderInEngine(orderID) {
+    if (!this.connected) return;
+    this.client.write(`C ${orderID}\n`);
   }
 
   handleEngineEvent(rawOutput) {
-    try {
-      const lines = rawOutput.split('\n');
-      lines.forEach((line) => {
-        if (line.startsWith('{')) {
-          const event = JSON.parse(line);
-          if (event.type === 'TRADE') {
-            console.log(`⚡ MATCH EXECUTED: ${event.quantity} tix @ $${event.price}`);
-          }
-        }
-      });
-    } catch (e) {
-      // Non-JSON debug logs from C++
-    }
+    const lines = rawOutput.split('\n');
+    lines.forEach((line) => {
+      const parts = line.trim().split(' ');
+      
+      if (parts[0] === 'F' && parts.length >= 4) {
+        const tradeID = parts[1];
+        const price = parseInt(parts[2], 10);
+        const qty = parseInt(parts[3], 10);
+        
+        console.log(`⚡ MATCH EXECUTED: ${qty} tix @ $${price} (Trade #${tradeID})`);
+      } else if (parts[0] === 'X') {
+        console.log(`❌ Cancel Status: ${parts[1]}`);
+      }
+    });
   }
 }
 

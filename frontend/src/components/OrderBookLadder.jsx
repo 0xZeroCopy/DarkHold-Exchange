@@ -13,6 +13,7 @@ export default function OrderBookLadder({ depthData }) {
         <div>
           <span className="text-xs text-rose-400 font-semibold uppercase">Asks (Sell Orders)</span>
           <div className="mt-2 space-y-1">
+            {topAsks.length === 0 && <div className="text-xs text-slate-500 px-2 py-1">No asks</div>}
             {topAsks.map((ask, idx) => (
               <div key={idx} className="flex justify-between items-center text-sm bg-rose-950/30 px-2 py-1 rounded border-l-2 border-rose-500">
                 <span className="text-rose-400 font-bold">${ask.price}</span>
@@ -26,6 +27,7 @@ export default function OrderBookLadder({ depthData }) {
         <div>
           <span className="text-xs text-emerald-400 font-semibold uppercase">Bids (Buy Orders)</span>
           <div className="mt-2 space-y-1">
+            {topBids.length === 0 && <div className="text-xs text-slate-500 px-2 py-1">No bids</div>}
             {topBids.map((bid, idx) => (
               <div key={idx} className="flex justify-between items-center text-sm bg-emerald-950/30 px-2 py-1 rounded border-r-2 border-emerald-500">
                 <span className="text-emerald-400 font-bold">${bid.price}</span>
