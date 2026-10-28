@@ -5,7 +5,9 @@ import DepthChart from './components/DepthChart.jsx';
 
 const WS_URL =
   import.meta.env.VITE_WS_URL ||
-  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:5000`;
+  (window.location.host.includes('github.dev')
+    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname}:5000`);
 
 const OPEN_STATUSES = ['ESCROWED', 'PARTIALLY_FILLED'];
 const STATUS_STYLES = {

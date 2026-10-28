@@ -1,0 +1,25 @@
+{
+  "name": "DarkHold Exchange",
+  "image": "mcr.microsoft.com/devcontainers/universal:2-linux",
+  "forwardPorts": [3000, 5000, 9000, 27017],
+  "portsAttributes": {
+    "3000": {
+      "label": "Frontend (React UI)",
+      "onAutoForward": "openBrowser"
+    },
+    "5000": {
+      "label": "Backend (Node Gateway)",
+      "onAutoForward": "silent"
+    },
+    "9000": {
+      "label": "C++ Matching Engine",
+      "onAutoForward": "silent"
+    },
+    "27017": {
+      "label": "MongoDB",
+      "onAutoForward": "silent"
+    }
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y build-essential"
+}
+
