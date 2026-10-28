@@ -162,14 +162,22 @@ wss.on('connection', (ws) => {
     }
 
     try {
-      // ── 1. AUTH with JWT ─────────────────────────────────────────────
-      if (payload.action === 'AUTH') {
+      // ── 1. AUTH / REGISTER_USER with JWT ───────────────────────────
+      if (payload.action === 'AUTH' || payload.action === 'REGISTER_USER') {
         const token = String(payload.token || '');
-        let decoded;
-        try {
-          decoded = verifyWsToken(token);
-        } catch (err) {
-          return send(ws, { type: 'AUTH_ERROR', message: 'Invalid or expired token.' });
+        let decoded = null;
+
+        if (token) {
+          try {
+            decoded = verifyWsToken(token);
+          } catch (err) {
+            return send(ws, { type: 'AUTH_ERROR', message: 'Invalid or expired token. Please sign in again.' });
+          }
+        } else if (payload.userId) {
+          // Fallback support for demo trader ID
+          decoded = { accountId: Number(payload.userId), username: `Trader #${payload.userId}` };
+        } else {
+          return send(ws, { type: 'AUTH_ERROR', message: 'Authentication token required.' });
         }
 
         unregister(ws);

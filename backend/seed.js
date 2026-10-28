@@ -1,11 +1,10 @@
 import 'dotenv/config';
 import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
 import User, { DEFAULT_BALANCES } from './models/User.js';
 import Order from './models/Order.js';
 import Trade from './models/Trade.js';
 
-// Usage: npm run seed            -> make sure demo traders 1001 and 1002 exist
-//        npm run seed -- --reset -> wipe orders/trades and reset balances (restart the engine afterwards!)
 const reset = process.argv.includes('--reset');
 
 try {
@@ -16,14 +15,25 @@ try {
     console.log('Cleared orders, trades and users.');
   }
 
+  const defaultPasswordHash = await bcrypt.hash('password123', 10);
+
   for (const accountId of [1001, 1002]) {
+    const username = `trader${accountId}`;
     await User.updateOne(
       { accountId },
-      { $setOnInsert: { accountId, name: `Trader #${accountId}`, balances: { ...DEFAULT_BALANCES } } },
+      {
+        $setOnInsert: {
+          accountId,
+          username,
+          name: `Trader #${accountId}`,
+          passwordHash: defaultPasswordHash,
+          balances: { ...DEFAULT_BALANCES }
+        }
+      },
       { upsert: true }
     );
   }
-  console.log('Seeded traders #1001 and #1002.');
+  console.log('Seeded demo traders: trader1001 / password123 and trader1002 / password123 (Accounts #1001 & #1002).');
   if (reset) console.log('NOTE: restart the C++ engine so its in-memory book is empty too.');
   process.exit(0);
 } catch (err) {

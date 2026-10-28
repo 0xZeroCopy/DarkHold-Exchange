@@ -21,8 +21,8 @@ const STATUS_STYLES = {
 const money = (n) => `$${Number(n ?? 0).toLocaleString()}`;
 const timeOf = (d) => (d ? new Date(d).toLocaleTimeString() : '--');
 
-export default function App({ auth }) {
-  const [userId] = useState(String(auth.user.accountId));
+export default function App({ auth = {} }) {
+  const [userId] = useState(String(auth?.user?.accountId || '1001'));
   const [balances, setBalances] = useState(null);
   const [orders, setOrders] = useState([]);
   const [trades, setTrades] = useState([]);
@@ -87,7 +87,7 @@ export default function App({ auth }) {
     }
   }, [showNotice, auth]);
 
-  const register = useCallback((send) => send({ action: 'REGISTER_USER', userId: userIdRef.current, token: auth.token }), [auth.token]);
+  const register = useCallback((send) => send({ action: 'REGISTER_USER', userId: userIdRef.current, token: auth?.token }), [auth?.token]);
   const { depthData, isConnected, lastPrice, send } = useWebSocket(WS_URL, { onOpen: register, onMessage: handleMessage });
 
   // Register the signed-in trader on the socket (the gateway takes the account from the token)
@@ -134,15 +134,17 @@ export default function App({ auth }) {
             </div>
             <div className="flex items-center space-x-3">
               <span className="text-sm font-medium text-gray-600">
-                Signed in as <span className="font-bold text-gray-800">{auth.user.username}</span>{' '}
-                <span className="text-gray-400">#{auth.user.accountId}</span>
+                Signed in as <span className="font-bold text-gray-800">{auth?.user?.username || 'Trader'}</span>{' '}
+                <span className="text-gray-400">#{auth?.user?.accountId || userId}</span>
               </span>
-              <button
-                onClick={auth.logout}
-                className="bg-white border border-gray-300 text-gray-700 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                Log out
-              </button>
+              {auth?.logout && (
+                <button
+                  onClick={auth.logout}
+                  className="bg-white border border-gray-300 text-gray-700 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  Log out
+                </button>
+              )}
             </div>
           </div>
         </header>
