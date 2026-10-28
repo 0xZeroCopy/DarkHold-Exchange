@@ -2,24 +2,13 @@
 #include <iostream>
 #include <cstring>
 #include <string>
+#include <fstream>
 
-// Windows / Linux Cross-Platform Socket Headers & Type Definitions
-#ifdef _WIN32
-    #include <winsock2.h>
-    #include <ws2tcpip.h>
-    #pragma comment(lib, "ws2_32.lib")
-    
-    typedef SSIZE_T ssize_t;
-    typedef int socklen_t;
-    #define close_socket closesocket
-#else
-    #include <sys/socket.h>
-    #include <netinet/in.h>
-    #include <netinet/tcp.h>
-    #include <arpa/inet.h>
-    #include <unistd.h>
-    #define close_socket close
-#endif
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 static bool readExact(int fd, char* buf, size_t n) {
     size_t got = 0;
@@ -32,19 +21,20 @@ static bool readExact(int fd, char* buf, size_t n) {
 }
 
 int main() {
-#ifdef _WIN32
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::cerr << "Failed to initialize Winsock (WSAStartup failed)\n";
-        return 1;
-    }
-#endif
+    const std::string walFile = "engine.wal";
+    matchingEngine engine(walFile);
 
-    matchingEngine engine("engine.wal");
+    // reload previous orders from wal if file exists
+    std::ifstream checkWal(walFile, std::ios::binary);
+    if (checkWal.good()) {
+        checkWal.close();
+        std::cout << "Loading state from " << walFile << "...\n";
+        engine.recoverFromWAL(walFile);
+    }
 
     int server = socket(AF_INET, SOCK_STREAM, 0);
     if (server < 0) {
-        std::cerr << "Failed to create socket\n";
+        std::cerr << "Cannot create socket\n";
         return 1;
     }
 
@@ -57,16 +47,16 @@ int main() {
     addr.sin_port = htons(9000);
 
     if (bind(server, (sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::cerr << "Failed to bind socket on port 9000\n";
+        std::cerr << "Failed to bind to port 9000\n";
         return 1;
     }
 
-    if (listen(server, 1) < 0) {
+    if (listen(server, 5) < 0) {
         std::cerr << "Failed to listen on port 9000\n";
         return 1;
     }
 
-    std::cout << "🟢 C++ Matching Engine TCP Server listening on 127.0.0.1:9000...\n";
+    std::cout << "C++ matching engine running on port 9000 with 8 worker threads\n";
 
     while (true) {
         int client = accept(server, nullptr, nullptr);
@@ -78,48 +68,20 @@ int main() {
         while (readExact(client, buf, sizeof(Command))) {
             Command cmd;
             memcpy(&cmd, buf, sizeof(Command));
-            std::string out;
 
-            // Use the timestamp received directly in the binary packet
-            uint64_t currentTimestamp = (cmd.now > 0) ? cmd.now : nowMs();
-
-            if (cmd.type == CommandType::PLACE_ORDER) {
-                // Ensure expiration timestamp is valid (10 minutes in future if unset)
-                if (cmd.orderPayload.expiresAt <= currentTimestamp) {
-                    cmd.orderPayload.expiresAt = currentTimestamp + EXPIRY_DURATION;
-                }
-
-                std::cout << "📥 Processing Order #" << cmd.orderPayload.orderID 
-                          << " | Account: " << cmd.orderPayload.accountID 
-                          << " | Side: " << (cmd.orderPayload.isBuy ? "BUY" : "SELL")
-                          << " | Price: $" << cmd.orderPayload.price 
-                          << " | Qty: " << cmd.orderPayload.quantityRemaining << std::endl;
-
-                // Execute Order in C++ Engine
-                auto trades = engine.processOrder(cmd.orderPayload, currentTimestamp);
-
-                for (auto& t : trades) {
-                    std::cout << "⚡ MATCH EXECUTED! Trade #" << t.tradeID 
-                              << " | Price: $" << t.price 
-                              << " | Qty: " << t.quantityFulfilled << std::endl;
-
-                    out += "F " + std::to_string(t.tradeID) + " " + std::to_string(t.price) + " " + std::to_string(t.quantityFulfilled) + "\n";
-                }
-            }
-            else if (cmd.type == CommandType::CANCEL_ORDER) {
-                out += engine.cancelOrder(cmd.cancelOrderID) ? "X ok\n" : "X none\n";
-            }
-
-            if (!out.empty()) {
+            if (cmd.type == CommandType::SNAPSHOT) {
+                uint32_t tId = cmd.orderPayload.tickerID;
+                if (tId < 1 || tId > NUM_TICKERS) tId = 1;
+                DepthSnapshot snap = engine.getDepth(tId);
+                std::string out = "D " + std::to_string(snap.lastPrice) + " " + std::to_string(snap.bids.size()) + " " + std::to_string(snap.asks.size()) + "\n";
                 send(client, out.data(), static_cast<int>(out.size()), 0);
+            } else {
+                // Route command to worker thread queue
+                engine.submitJobToWorker(cmd, client);
             }
         }
-        close_socket(client);
+        close(client);
     }
-
-#ifdef _WIN32
-    WSACleanup();
-#endif
 
     return 0;
 }
