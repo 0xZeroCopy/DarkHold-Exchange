@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "seed": "node seed.js",
-    "test:perf": "node ../tests/latency_throughput.js"
+    "test": "node tests/latency_throughput.js && node tests/price_collar.test.js",
+    "test:perf": "node tests/latency_throughput.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

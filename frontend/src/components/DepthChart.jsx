@@ -13,7 +13,7 @@ export default function DepthChart({ depthData }) {
   const all = [...bids, ...asks];
 
   let body = (
-    <div className="h-32 flex items-center justify-center border border-dashed border-slate-800 rounded text-slate-500 text-xs font-mono">
+    <div className="h-32 flex items-center justify-center border border-dashed border-[#ebd2b5]/30 rounded text-[#ebd2b5]/60 text-xs font-mono">
       No resting orders yet
     </div>
   );
@@ -36,18 +36,18 @@ export default function DepthChart({ depthData }) {
 
     body = (
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-32" role="img" aria-label="Cumulative market depth">
-        {bids.length > 0 && <path d={area(bids, PAD)} fill="rgba(16,185,129,0.25)" stroke="#10b981" strokeWidth="1.5" />}
-        {asks.length > 0 && <path d={area(asks, W - PAD)} fill="rgba(244,63,94,0.25)" stroke="#f43f5e" strokeWidth="1.5" />}
-        <line x1={PAD} x2={W - PAD} y1={BASE} y2={BASE} stroke="#334155" />
-        <text x={PAD} y={H - 2} fontSize="10" fill="#94a3b8">${lo}</text>
-        <text x={W - PAD} y={H - 2} fontSize="10" fill="#94a3b8" textAnchor="end">${hi}</text>
+        {bids.length > 0 && <path d={area(bids, PAD)} fill="rgba(16,185,129,0.3)" stroke="#10b981" strokeWidth="1.5" />}
+        {asks.length > 0 && <path d={area(asks, W - PAD)} fill="rgba(244,63,94,0.3)" stroke="#f43f5e" strokeWidth="1.5" />}
+        <line x1={PAD} x2={W - PAD} y1={BASE} y2={BASE} stroke="#ebd2b5" strokeOpacity="0.3" />
+        <text x={PAD} y={H - 2} fontSize="10" fill="#ebd2b5">${lo}</text>
+        <text x={W - PAD} y={H - 2} fontSize="10" fill="#ebd2b5" textAnchor="end">${hi}</text>
       </svg>
     );
   }
 
   return (
-    <div className="bg-slate-900 text-slate-100 p-4 rounded-xl border border-slate-800 shadow-xl">
-      <h2 className="text-sm font-semibold tracking-wider uppercase text-slate-400 mb-3">Cumulative Market Depth</h2>
+    <div className="bg-[#590907] text-white p-4 rounded-xl border border-[#590907] shadow-md">
+      <h2 className="text-sm font-semibold tracking-wider uppercase text-[#ebd2b5] mb-3">Cumulative Market Depth</h2>
       {body}
     </div>
   );

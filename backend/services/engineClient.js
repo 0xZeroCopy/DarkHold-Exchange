@@ -77,6 +77,7 @@ export class EngineClient extends EventEmitter {
     this.buffer = '';
     this.seq = 0;
     this.pending = null;
+    this.queue = [];
     this.warned = false;
     this.connect();
   }
@@ -96,6 +97,7 @@ export class EngineClient extends EventEmitter {
       this.buffer = '';
       console.log(`🟢 Connected to C++ matching engine on ${this.host}:${this.port}`);
       this.emit('connected');
+      this.processQueue();
     });
 
     socket.on('data', (chunk) => this.onData(chunk));
@@ -118,6 +120,41 @@ export class EngineClient extends EventEmitter {
     socket.connect(this.port, this.host);
   }
 
+  processQueue() {
+    if (!this.connected || this.pending || this.queue.length === 0) return;
+    const req = this.queue.shift();
+    this.dispatch(req);
+  }
+
+  dispatch(req) {
+    const timer = setTimeout(() => {
+      req.reject(new Error('Engine request timed out.'));
+      this.pending = null;
+      this.processQueue();
+    }, REQUEST_TIMEOUT_MS);
+
+    this.pending = {
+      resolve: (val) => {
+        clearTimeout(timer);
+        this.pending = null;
+        req.resolve(val);
+        this.processQueue();
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        this.pending = null;
+        req.reject(err);
+        this.processQueue();
+      },
+      lines: [],
+      expectTag: req.expectTag,
+      expectCount: req.expectCount,
+      seen: 0,
+    };
+
+    this.socket.write(Buffer.concat(req.frames));
+  }
+
   onData(chunk) {
     this.buffer += chunk.toString();
     const lines = this.buffer.split('\n');
@@ -133,9 +170,7 @@ export class EngineClient extends EventEmitter {
 
         // Errors terminate early
         if (line[0] === 'E') {
-          const { reject, timer } = this.pending;
-          clearTimeout(timer);
-          this.pending = null;
+          const { reject } = this.pending;
           reject(new Error(line.slice(2).trim()));
           continue;
         }
@@ -147,9 +182,7 @@ export class EngineClient extends EventEmitter {
           (this.pending.expectTag === 'D' && line[0] === 'D');
 
         if (isDone) {
-          const { resolve, lines: out, timer } = this.pending;
-          clearTimeout(timer);
-          this.pending = null;
+          const { resolve, lines: out } = this.pending;
           resolve(out);
         }
       }
@@ -157,11 +190,15 @@ export class EngineClient extends EventEmitter {
   }
 
   failPending(err) {
-    if (!this.pending) return;
-    const { reject, timer } = this.pending;
-    clearTimeout(timer);
-    this.pending = null;
-    reject(err);
+    if (this.pending) {
+      const { reject } = this.pending;
+      this.pending = null;
+      reject(err);
+    }
+    while (this.queue.length > 0) {
+      const req = this.queue.shift();
+      req.reject(err);
+    }
   }
 
   /**
@@ -170,28 +207,27 @@ export class EngineClient extends EventEmitter {
   request(frames, expectTag = 'X', expectCount = 1) {
     return new Promise((resolve, reject) => {
       if (!this.connected) return reject(new Error('Matching engine is offline.'));
-      if (this.pending) return reject(new Error('Engine request already in flight.'));
-
-      const timer = setTimeout(() => {
-        this.failPending(new Error('Engine request timed out.'));
-        this.socket.destroy();
-      }, REQUEST_TIMEOUT_MS);
-
-      this.pending = { resolve, reject, timer, lines: [], expectTag, expectCount, seen: 0 };
-      this.socket.write(Buffer.concat(frames));
+      this.queue.push({ frames, expectTag, expectCount, resolve, reject });
+      this.processQueue();
     });
   }
 
   /**
    * Submit an order to the C++ worker thread queue over TCP.
-   * Sends the PLACE_ORDER command followed by a sentinel CANCEL_ORDER (id 0) to collect fills.
+   * Sends the PLACE_ORDER command followed by an in-order sentinel CANCEL_ORDER
+   * directed to the same worker and engine queue to collect fills.
    */
-  async submitOrder({ isBuy, price, quantity, accountId, tickerId = 1, isMarket = 0 }) {
+  async submitOrder({ orderId = 0, isBuy, price, quantity, accountId, tickerId = 1, isMarket = 0 }) {
     const now = Date.now();
+    const workerId = Number(accountId) & 7;
+    // Sentinel cancel ID with matching workerId in lowest 3 bits ensures in-order traversal
+    // through the worker's queue and engine queue behind the PLACE_ORDER job.
+    const sentinelOrderId = (9999999n << 3n) | BigInt(workerId);
+
     const frames = [
       packPlace({
         seq: this.nextSeq(),
-        orderId: 0, // Assigned by C++ worker thread
+        orderId,
         quantity,
         price,
         isBuy,
@@ -201,7 +237,7 @@ export class EngineClient extends EventEmitter {
         tickerId,
         now,
       }),
-      packCancel({ seq: this.nextSeq(), orderId: 0, now }), // Sentinel: worker 0 replies "X none"
+      packCancel({ seq: this.nextSeq(), orderId: sentinelOrderId, now }),
     ];
 
     const lines = await this.request(frames, 'X', 1);

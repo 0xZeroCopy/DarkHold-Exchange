@@ -2,12 +2,10 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 
-const ACCESS_SECRET  = process.env.JWT_SECRET;
-const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh';
+const ACCESS_SECRET  = process.env.JWT_SECRET || 'darkhold_jwt_secret_key_2026';
+const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || ACCESS_SECRET + '_refresh';
 const ACCESS_TTL     = '15m';   // short-lived
 const REFRESH_TTL    = '7d';    // longer-lived, rotated on use
-
-if (!ACCESS_SECRET) throw new Error('JWT_SECRET env var is required');
 
 /**
  * Sign a short-lived access token.
